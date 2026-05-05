@@ -1,0 +1,80 @@
+name: Checkmarx API Connectivity Test
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "scripts/checkmarx_connectivity.py"
+      - "requirements.txt"
+      - ".github/workflows/checkmarx-connectivity.yml"
+
+jobs:
+  checkmarx-api-test:
+    name: Test Checkmarx REST API
+    runs-on: [self-hosted, linux, profuturo]
+    timeout-minutes: 10
+
+    env:
+      CX_BASE_URL: ${{ vars.CX_BASE_URL || 'https://acpckmapp04.profuturo-gnp.net' }}
+      CX_USERNAME: ${{ secrets.CX_USERNAME }}
+      CX_PASSWORD: ${{ secrets.CX_PASSWORD }}
+      CX_CLIENT_SECRET: ${{ secrets.CX_CLIENT_SECRET }}
+
+      # Para primer diagnóstico puedes dejar false.
+      # En productivo debe ser true o path a CA corporativa.
+      CX_VERIFY_TLS: ${{ vars.CX_VERIFY_TLS || 'false' }}
+
+      CX_TIMEOUT: "30"
+      CX_TRUST_ENV: ${{ vars.CX_TRUST_ENV || 'true' }}
+
+      # Si NO debe salir por proxy hacia dominios internos, esto es clave.
+      NO_PROXY: ${{ vars.NO_PROXY || 'localhost,127.0.0.1,.profuturo-gnp.net,profuturo-gnp.net,acpckmapp04.profuturo-gnp.net' }}
+
+      # Solo si tu red corporativa exige proxy.
+      HTTP_PROXY: ${{ secrets.HTTP_PROXY }}
+      HTTPS_PROXY: ${{ secrets.HTTPS_PROXY }}
+
+      # Opcional: CA corporativa codificada en base64.
+      CX_CA_BUNDLE_B64: ${{ secrets.CX_CA_BUNDLE_B64 }}
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Configure corporate CA bundle if provided
+        shell: bash
+        run: |
+          if [ -n "${CX_CA_BUNDLE_B64:-}" ]; then
+            mkdir -p certs
+            printf '%s' "$CX_CA_BUNDLE_B64" | base64 -d > certs/corporate_ca.pem
+            echo "CX_VERIFY_TLS=$PWD/certs/corporate_ca.pem" >> "$GITHUB_ENV"
+            echo "Corporate CA bundle configured."
+          else
+            echo "No corporate CA bundle provided. Using CX_VERIFY_TLS=$CX_VERIFY_TLS"
+          fi
+
+      - name: Show safe runtime context
+        shell: bash
+        run: |
+          echo "Runner: $RUNNER_NAME"
+          echo "OS: $RUNNER_OS"
+          echo "CX_BASE_URL: $CX_BASE_URL"
+          echo "CX_VERIFY_TLS: $CX_VERIFY_TLS"
+          echo "NO_PROXY: $NO_PROXY"
+          echo "HTTP_PROXY configured: $([ -n "${HTTP_PROXY:-}" ] && echo yes || echo no)"
+          echo "HTTPS_PROXY configured: $([ -n "${HTTPS_PROXY:-}" ] && echo yes || echo no)"
+
+      - name: Test Checkmarx API
+        run: |
+          python scripts/checkmarx_connectivity.py
